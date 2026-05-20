@@ -1,0 +1,230 @@
+﻿
+CREATE TABLE "Users" (
+    id SERIAL PRIMARY KEY,
+    login VARCHAR(50) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(20) DEFAULT 'User',
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE "Authors" (
+    id SERIAL PRIMARY KEY,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    birth_date DATE,
+    biography TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE "Genres" (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE "Books" (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(200) NOT NULL,
+    author_id INTEGER NOT NULL REFERENCES "Authors"(id) ON DELETE CASCADE,
+    genre_id INTEGER NOT NULL REFERENCES "Genres"(id) ON DELETE CASCADE,
+    year_published INTEGER CHECK (year_published >= 1000 AND year_published <= EXTRACT(YEAR FROM CURRENT_DATE)),
+    isbn VARCHAR(20) UNIQUE,
+    description TEXT,
+    page_count INTEGER,
+    publisher VARCHAR(200),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_books_title ON "Books" (title);
+CREATE INDEX idx_books_author ON "Books" (author_id);
+CREATE INDEX idx_books_genre ON "Books" (genre_id);
+CREATE INDEX idx_books_year ON "Books" (year_published);
+CREATE INDEX idx_authors_name ON "Authors" (last_name, first_name);
+CREATE INDEX idx_genres_name ON "Genres" (name);
+CREATE INDEX idx_users_login ON "Users" (login);
+
+CREATE OR REPLACE FUNCTION "RegisterUser"(
+    p_login VARCHAR,
+    p_password_hash VARCHAR
+) RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM "Users" WHERE login = p_login) THEN
+        RETURN 0;
+    END IF;
+    INSERT INTO "Users" (login, password_hash, role, is_active)
+    VALUES (p_login, p_password_hash, 'User', true);
+    RETURN 1;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION "SearchBooks"(
+    p_title VARCHAR DEFAULT NULL,
+    p_author VARCHAR DEFAULT NULL,
+    p_genre VARCHAR DEFAULT NULL,
+    p_year_from INTEGER DEFAULT NULL,
+    p_year_to INTEGER DEFAULT NULL
+)
+RETURNS TABLE(
+    book_id INTEGER,
+    title VARCHAR,
+    author_name TEXT,
+    genre_name VARCHAR,
+    year_published INTEGER,
+    isbn VARCHAR,
+    page_count INTEGER,
+    publisher VARCHAR
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        b.id,
+        b.title,
+        CONCAT(a.last_name, ' ', a.first_name),
+        g.name,
+        b.year_published,
+        b.isbn,
+        b.page_count,
+        b.publisher
+    FROM "Books" b
+    JOIN "Authors" a ON b.author_id = a.id
+    JOIN "Genres" g ON b.genre_id = g.id
+    WHERE (p_title IS NULL OR b.title ILIKE '%' || p_title || '%')
+      AND (p_author IS NULL OR CONCAT(a.last_name, ' ', a.first_name) ILIKE '%' || p_author || '%')
+      AND (p_genre IS NULL OR g.name ILIKE '%' || p_genre || '%')
+      AND (p_year_from IS NULL OR b.year_published >= p_year_from)
+      AND (p_year_to IS NULL OR b.year_published <= p_year_to)
+    ORDER BY b.title;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION "GetAllBooks"()
+RETURNS TABLE(
+    id INTEGER,
+    title VARCHAR,
+    author_id INTEGER,
+    author_name TEXT,
+    genre_id INTEGER,
+    genre_name VARCHAR,
+    year_published INTEGER,
+    isbn VARCHAR,
+    description TEXT,
+    page_count INTEGER,
+    publisher VARCHAR,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        b.id,
+        b.title,
+        b.author_id,
+        CONCAT(a.last_name, ' ', a.first_name),
+        b.genre_id,
+        g.name,
+        b.year_published,
+        b.isbn,
+        b.description,
+        b.page_count,
+        b.publisher,
+        b.created_at,
+        b.updated_at
+    FROM "Books" b
+    JOIN "Authors" a ON b.author_id = a.id
+    JOIN "Genres" g ON b.genre_id = g.id
+    ORDER BY b.title;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION "GetBookById"(p_book_id INTEGER)
+RETURNS TABLE(
+    id INTEGER,
+    title VARCHAR,
+    author_id INTEGER,
+    author_name TEXT,
+    genre_id INTEGER,
+    genre_name VARCHAR,
+    year_published INTEGER,
+    isbn VARCHAR,
+    description TEXT,
+    page_count INTEGER,
+    publisher VARCHAR,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        b.id,
+        b.title,
+        b.author_id,
+        CONCAT(a.last_name, ' ', a.first_name),
+        b.genre_id,
+        g.name,
+        b.year_published,
+        b.isbn,
+        b.description,
+        b.page_count,
+        b.publisher,
+        b.created_at,
+        b.updated_at
+    FROM "Books" b
+    JOIN "Authors" a ON b.author_id = a.id
+    JOIN "Genres" g ON b.genre_id = g.id
+    WHERE b.id = p_book_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION "UpdateUpdatedAtColumn"()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_books_updated_at
+    BEFORE UPDATE ON "Books"
+    FOR EACH ROW
+    EXECUTE FUNCTION "UpdateUpdatedAtColumn"();
+
+INSERT INTO "Genres" (name, description) VALUES
+('Фантастика', 'Научная фантастика и фэнтези'),
+('Детектив', 'Криминальные романы и детективы'),
+('Роман', 'Любовные и психологические романы'),
+('Классика', 'Классическая литература'),
+('Поэзия', 'Стихотворения и поэмы'),
+('Приключения', 'Приключенческие романы и повести'),
+('История', 'Историческая литература'),
+('Научная литература', 'Научно-популярные издания');
+
+INSERT INTO "Authors" (first_name, last_name, birth_date, biography) VALUES
+('Аркадий', 'Стругацкий', '1925-08-28', 'Советский и российский писатель-фантаст'),
+('Борис', 'Стругацкий', '1933-04-15', 'Советский и российский писатель-фантаст'),
+('Агата', 'Кристи', '1890-09-15', 'Английская писательница-детективщица'),
+('Лев', 'Толстой', '1828-09-09', 'Великий русский писатель'),
+('Михаил', 'Булгаков', '1891-05-15', 'Русский писатель и драматург'),
+('Фёдор', 'Достоевский', '1821-11-11', 'Русский писатель, мыслитель'),
+('Джордж', 'Оруэлл', '1903-06-25', 'Английский писатель и публицист'),
+('Эрих Мария', 'Ремарк', '1898-06-22', 'Немецкий писатель');
+
+INSERT INTO "Books" (title, author_id, genre_id, year_published, isbn, page_count, publisher, description) VALUES
+('Пикник на обочине', 1, 1, 1972, '978-5-17-1181234', 256, 'АСТ', 'Знаменитая повесть братьев Стругацких'),
+('Десять негритят', 3, 2, 1939, '978-5-04-0985678', 288, 'Эксмо', 'Классический детектив Агаты Кристи'),
+('Война и мир', 4, 3, 1869, '978-5-699-1234567', 1300, 'Эксмо', 'Великий роман-эпопея Льва Толстого'),
+('Мастер и Маргарита', 5, 1, 1967, '978-5-17-0987654', 480, 'АСТ', 'Знаменитый роман Михаила Булгакова'),
+('Убийство в Восточном экспрессе', 3, 2, 1934, '978-5-04-0981234', 320, 'Эксмо', 'Лучший детектив Агаты Кристи'),
+('Преступление и наказание', 6, 4, 1866, '978-5-17-1123456', 672, 'АСТ', 'Великий роман Фёдора Достоевского'),
+('1984', 7, 1, 1949, '978-5-17-1087654', 328, 'АСТ', 'Роман-антиутопия Джорджа Оруэлла'),
+('Три товарища', 8, 3, 1936, '978-5-17-1145678', 512, 'АСТ', 'Знаменитый роман Эриха Марии Ремарка');
